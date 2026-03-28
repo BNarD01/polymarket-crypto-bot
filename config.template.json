@@ -1,0 +1,20 @@
+{
+  "_comment": "Copy this file to config.json and fill in your credentials. Never commit config.json.",
+
+  "api_key":        "YOUR_POLYMARKET_API_KEY",
+  "api_secret":     "YOUR_POLYMARKET_API_SECRET",
+  "api_passphrase": "YOUR_POLYMARKET_API_PASSPHRASE",
+
+  "telegram_token":   "YOUR_TELEGRAM_BOT_TOKEN",
+  "telegram_chat_id": "YOUR_TELEGRAM_CHAT_ID",
+
+  "budget_usdc": 50.0,
+
+  "dry_run": true,
+
+  "_notes": [
+    "Get API credentials from https://polymarket.com/profile -> API Keys",
+    "dry_run=true logs trades without sending real orders — set false to go live",
+    "budget_usdc is the max USDC the bot is allowed to spend in total"
+  ]
+}
