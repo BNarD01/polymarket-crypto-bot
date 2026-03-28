@@ -231,9 +231,12 @@ class TradeExecutor:
             try:
                 from py_clob_client.client import ClobClient
                 from py_clob_client.clob_types import ApiCreds
+                pk = cfg["private_key"].strip()
+                if not pk.startswith("0x"):
+                    pk = "0x" + pk
                 self._clob = ClobClient(
                     host=POLYMARKET_CLOB,
-                    key=cfg["private_key"],
+                    key=pk,
                     chain_id=137,   # Polygon mainnet
                     creds=ApiCreds(
                         api_key=cfg["api_key"],
