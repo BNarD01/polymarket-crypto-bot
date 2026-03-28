@@ -122,6 +122,10 @@ class MarketFinder:
                                 tokens = json.loads(tokens)
                         except Exception:
                             continue
+                        # Skip already-resolved markets (price at 0 or 1)
+                        if yes_price <= 0.01 or yes_price >= 0.99:
+                            log.info(f"Skipping resolved market: {slug} YES={yes_price:.4f}")
+                            continue
                         result[label] = {
                             "condition_id": m.get("conditionId", ""),
                             "token_yes":    tokens[0] if len(tokens) > 0 else "",
@@ -368,6 +372,9 @@ class ArbEngine:
             hedge_price   = no5
             direction_lbl = "15m-YES / 5m-NO"
 
+        if buy_price <= 0 or hedge_price <= 0:
+            log.warning("Zero price detected, skipping spread trade.")
+            return False
         leg_size  = min(self.MAX_TRADE_USDC, self.available / 2)
         buy_qty   = round(leg_size / buy_price,   2)
         hedge_qty = round(leg_size / hedge_price, 2)
