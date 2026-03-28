@@ -372,13 +372,20 @@ class ArbEngine:
         If 15m is priced too high relative to 5m, we sell 15m UP (buy NO) and
         buy 5m YES expecting mean reversion.
         """
-        yes5,  no5  = self.ob.get_live_prices(m5)
-        yes15, no15 = self.ob.get_live_prices(m15)
+        # Use Gamma prices as primary source (most accurate for short-duration markets)
+        # Only override with live prices if they are valid and consistent with Gamma
+        yes5, no5   = m5["yes_price"],  m5["no_price"]
+        yes15, no15 = m15["yes_price"], m15["no_price"]
 
-        yes5  = yes5  or m5["yes_price"]
-        yes15 = yes15 or m15["yes_price"]
-        no5   = no5   or m5["no_price"]
-        no15  = no15  or m15["no_price"]
+        live_yes5, live_no5 = self.ob.get_live_prices(m5)
+        if live_yes5 and live_no5 and abs(live_yes5 + live_no5 - 1.0) <= 0.05:
+            if abs(live_yes5 - yes5) <= 0.20:  # within 20% of Gamma price
+                yes5, no5 = live_yes5, live_no5
+
+        live_yes15, live_no15 = self.ob.get_live_prices(m15)
+        if live_yes15 and live_no15 and abs(live_yes15 + live_no15 - 1.0) <= 0.05:
+            if abs(live_yes15 - yes15) <= 0.20:
+                yes15, no15 = live_yes15, live_no15
 
         spread = yes15 - yes5
         log.info(f"[Cross-spread] 5m YES={yes5:.4f}  15m YES={yes15:.4f}  "
