@@ -125,8 +125,8 @@ class MarketFinder:
                         # Skip resolved/bad markets
                         # Valid binary market: YES+NO ≈ 1.0 and neither at extreme
                         price_sum = yes_price + no_price
-                        if yes_price <= 0.01 or yes_price >= 0.99:
-                            log.info(f"Skipping resolved market: {slug} YES={yes_price:.4f}")
+                        if yes_price <= 0.05 or yes_price >= 0.95:
+                            log.info(f"Skipping near-resolved market: {slug} YES={yes_price:.4f}")
                             continue
                         if abs(price_sum - 1.0) > 0.15:
                             log.info(f"Skipping bad-data market: {slug} sum={price_sum:.4f}")
@@ -287,6 +287,7 @@ class ArbEngine:
     MIN_PROFIT_A     = 0.01           # 1% net after fees
     MIN_SPREAD_B     = 0.08           # 8% price gap for cross-market trade
     MAX_TRADE_USDC   = 10.0           # max USDC per leg to preserve budget
+    SPREAD_COOLDOWN  = 300            # seconds between cross-spread trades (5 min)
 
     def __init__(self, ob: OrderBook, executor: TradeExecutor, tg: Telegram,
                  budget: float, cfg: Dict):
@@ -298,6 +299,7 @@ class ArbEngine:
         self.pnl      = 0.0           # realized P&L
         self.trades   = 0
         self.dry_run  = cfg.get("dry_run", True)
+        self._last_spread_time = 0.0  # cooldown tracker for cross-spread trades
 
     @property
     def available(self) -> float:
@@ -387,6 +389,12 @@ class ArbEngine:
         if self.available < 5.0:
             return False
 
+        # Cooldown: only one spread trade per SPREAD_COOLDOWN window
+        elapsed = time.time() - self._last_spread_time
+        if elapsed < self.SPREAD_COOLDOWN:
+            log.info(f"[Cross-spread] Cooldown active ({self.SPREAD_COOLDOWN - elapsed:.0f}s left), skipping.")
+            return False
+
         if spread > 0:
             # 15m overpriced vs 5m: buy 5m YES + buy 15m NO
             buy_token     = m5["token_yes"]
@@ -419,6 +427,7 @@ class ArbEngine:
             cost = leg_size * 2
             self.spent += cost
             self.trades += 1
+            self._last_spread_time = time.time()
             msg = (
                 f"<b>Spread trade [{direction_lbl}]</b>\n"
                 f"Spread: {abs(spread)*100:.2f}%\n"
