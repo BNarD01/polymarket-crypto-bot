@@ -234,16 +234,31 @@ class TradeExecutor:
                 pk = cfg["private_key"].strip()
                 if not pk.startswith("0x"):
                     pk = "0x" + pk
-                self._clob = ClobClient(
-                    host=POLYMARKET_CLOB,
-                    key=pk,
-                    chain_id=137,   # Polygon mainnet
-                    creds=ApiCreds(
+
+                # Derive L2 API credentials from private key (deterministic, no manual keys needed)
+                try:
+                    l1 = ClobClient(host=POLYMARKET_CLOB, key=pk, chain_id=137)
+                    derived = l1.derive_api_key()
+                    creds = ApiCreds(
+                        api_key=derived.get("apiKey") or derived.get("api_key", cfg["api_key"]),
+                        api_secret=derived.get("secret", cfg["api_secret"]),
+                        api_passphrase=derived.get("passphrase", cfg["api_passphrase"]),
+                    )
+                    log.info(f"Derived API key: {creds.api_key}")
+                except Exception as e:
+                    log.warning(f"derive_api_key failed ({e}), using config credentials")
+                    creds = ApiCreds(
                         api_key=cfg["api_key"],
                         api_secret=cfg["api_secret"],
                         api_passphrase=cfg["api_passphrase"],
-                    ),
-                    signature_type=1,   # 1=Polymarket proxy (default for web signup)
+                    )
+
+                self._clob = ClobClient(
+                    host=POLYMARKET_CLOB,
+                    key=pk,
+                    chain_id=137,
+                    creds=creds,
+                    signature_type=0,
                 )
                 log.info("CLOB client initialised (LIVE mode)")
             except ImportError:
@@ -271,6 +286,17 @@ class TradeExecutor:
         try:
             from py_clob_client.clob_types import OrderArgs, OrderType
             from py_clob_client.order_builder.builder import BUY, SELL
+
+            # Check orderbook exists before placing order
+            try:
+                ob = self._clob.get_order_book(token_id)
+                if ob is None:
+                    log.warning(f"No CLOB orderbook for token {token_id[:12]}..., skipping.")
+                    return None
+            except Exception as ob_err:
+                log.warning(f"Orderbook check failed for {token_id[:12]}... ({ob_err}), skipping.")
+                return None
+
             order_args = OrderArgs(
                 token_id=token_id,
                 price=round(price, 4),
