@@ -85,25 +85,50 @@ class MarketFinder:
         Each dict has keys: condition_id, token_yes, token_no, yes_price, no_price, ticker
         """
         result: Dict[str, Optional[Dict]] = {"5m": None, "15m": None}
-        try:
-            url = f"{GAMMA_API}/events?active=true&closed=false&tag=crypto&limit=100"
-            r = self.session.get(url, timeout=10)
-            r.raise_for_status()
-            events = r.json()
-        except Exception as e:
-            log.error(f"Gamma API error: {e}")
+        # Try multiple search strategies
+        urls = [
+            f"{GAMMA_API}/events?active=true&closed=false&tag=crypto&limit=100",
+            f"{GAMMA_API}/events?active=true&closed=false&limit=200",
+            f"{GAMMA_API}/markets?active=true&closed=false&tag=crypto&limit=200",
+        ]
+        events = []
+        for url in urls:
+            try:
+                r = self.session.get(url, timeout=10)
+                r.raise_for_status()
+                data = r.json()
+                if isinstance(data, list):
+                    events = data
+                elif isinstance(data, dict):
+                    events = data.get("events", data.get("markets", []))
+                if events:
+                    log.info(f"Fetched {len(events)} items from {url}")
+                    break
+            except Exception as e:
+                log.warning(f"URL failed {url}: {e}")
+                continue
+
+        if not events:
+            log.error("All API URLs failed")
             return result
+
+        # Log first few tickers to debug
+        sample = [e.get("ticker", e.get("slug", "?")) for e in events[:10]]
+        log.info(f"Sample tickers: {sample}")
 
         for event in events:
             ticker = event.get("ticker", "").lower()
             slug   = event.get("slug", "").lower()
+            title  = event.get("title", event.get("question", "")).lower()
 
-            is_btc  = "btc" in ticker or "bitcoin" in ticker or "btc" in slug
-            is_5m   = "updown-5m"  in ticker or "5m" in ticker
-            is_15m  = "updown-15m" in ticker or "15m" in ticker
+            is_btc  = any(k in s for k in ["btc", "bitcoin"] for s in [ticker, slug, title])
+            is_5m   = any(k in s for k in ["5m", "5-min", "5min"] for s in [ticker, slug, title])
+            is_15m  = any(k in s for k in ["15m", "15-min", "15min"] for s in [ticker, slug, title])
 
             if not is_btc:
                 continue
+
+            log.info(f"BTC market found: ticker={ticker} slug={slug} 5m={is_5m} 15m={is_15m}")
 
             markets = event.get("markets", [])
             if not markets:
