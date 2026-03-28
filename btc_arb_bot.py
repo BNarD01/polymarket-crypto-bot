@@ -235,34 +235,20 @@ class TradeExecutor:
                 if not pk.startswith("0x"):
                     pk = "0x" + pk
 
-                # Derive L2 API credentials from private key (deterministic, no manual keys needed)
-                try:
-                    l1 = ClobClient(host=POLYMARKET_CLOB, key=pk, chain_id=137)
-                    derived = l1.derive_api_key()
-                    # derive_api_key returns ApiCreds object (not dict) — use attribute access
-                    if hasattr(derived, "api_key"):
-                        creds = derived  # already an ApiCreds object
-                    else:
-                        creds = ApiCreds(
-                            api_key=derived.get("apiKey") or derived.get("api_key", cfg["api_key"]),
-                            api_secret=derived.get("secret", cfg["api_secret"]),
-                            api_passphrase=derived.get("passphrase", cfg["api_passphrase"]),
-                        )
-                    log.info(f"Derived API key: {creds.api_key}")
-                except Exception as e:
-                    log.warning(f"derive_api_key failed ({e}), using config credentials")
-                    creds = ApiCreds(
-                        api_key=cfg["api_key"],
-                        api_secret=cfg["api_secret"],
-                        api_passphrase=cfg["api_passphrase"],
-                    )
+                # Use dashboard API credentials (proxy wallet account, standard web signup)
+                creds = ApiCreds(
+                    api_key=cfg["api_key"],
+                    api_secret=cfg["api_secret"],
+                    api_passphrase=cfg["api_passphrase"],
+                )
+                log.info(f"Using API key: {creds.api_key}")
 
                 self._clob = ClobClient(
                     host=POLYMARKET_CLOB,
                     key=pk,
                     chain_id=137,
                     creds=creds,
-                    signature_type=0,
+                    signature_type=1,   # 1 = Polymarket proxy wallet (standard for web/MetaMask users)
                 )
                 log.info("CLOB client initialised (LIVE mode)")
             except ImportError:
