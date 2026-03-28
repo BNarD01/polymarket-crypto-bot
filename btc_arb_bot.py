@@ -286,16 +286,15 @@ class TradeExecutor:
                 for line in diag_lines:
                     log.info(f"[DIAG] {line}")
 
-                # signature_type=1 = Polymarket proxy wallet (smart contract)
-                # funder = proxy wallet address (0x3878ce...)
-                # key    = EOA private key that controls the proxy wallet
+                # signature_type=0 = EOA direct (MetaMask wallet signs directly)
+                # signature_type=1 gave "invalid signature" — proxy contract may not
+                # recognise this EOA as an authorized signer on-chain.
                 self._clob = ClobClient(
                     host=POLYMARKET_CLOB,
                     key=pk,
                     chain_id=137,
                     creds=creds,
-                    signature_type=1,
-                    funder=funder if funder else None,
+                    signature_type=0,
                 )
                 log.info("CLOB client initialised (LIVE mode)")
             except ImportError:
