@@ -85,71 +85,89 @@ class MarketFinder:
         Each dict has keys: condition_id, token_yes, token_no, yes_price, no_price, ticker
         """
         result: Dict[str, Optional[Dict]] = {"5m": None, "15m": None}
+        import datetime as dt
 
-        # Polymarket short-duration crypto markets use the markets endpoint with specific tags
-        search_urls = [
-            f"{GAMMA_API}/markets?active=true&closed=false&tag=crypto-price&limit=100",
-            f"{GAMMA_API}/markets?active=true&closed=false&tag=bitcoin&limit=100",
-            f"{GAMMA_API}/markets?active=true&closed=false&slug=btc&limit=100",
-            f"{GAMMA_API}/events?active=true&closed=false&tag=crypto-price&limit=100",
-            f"{GAMMA_API}/events?active=true&closed=false&tag=bitcoin&limit=100",
-            f"{GAMMA_API}/markets?active=true&closed=false&limit=500",
-        ]
+        now_ts = int(time.time())
 
+        # Search CLOB API and Gamma API for short-duration BTC markets
         all_markets = []
-        for url in search_urls:
+
+        # 1. CLOB API - search by keyword
+        for keyword in ["btc", "bitcoin"]:
+            try:
+                url = f"{POLYMARKET_CLOB}/markets?search={keyword}&active=true&closed=false&limit=100"
+                r = self.session.get(url, timeout=10)
+                if r.status_code == 200:
+                    data = r.json()
+                    items = data if isinstance(data, list) else data.get("markets", [])
+                    all_markets.extend(items)
+                    log.info(f"CLOB search '{keyword}': {len(items)} markets")
+            except Exception as e:
+                log.warning(f"CLOB search error: {e}")
+
+        # 2. Gamma API markets
+        for url in [
+            f"{GAMMA_API}/markets?active=true&closed=false&tag=crypto-price&limit=500",
+            f"{GAMMA_API}/markets?active=true&closed=false&limit=500",
+        ]:
             try:
                 r = self.session.get(url, timeout=10)
-                if r.status_code != 200:
-                    continue
-                data = r.json()
-                items = data if isinstance(data, list) else data.get("markets", data.get("events", []))
-                # For events, flatten to markets
-                flat = []
-                for item in items:
-                    if "markets" in item:
-                        flat.extend(item["markets"])
-                    else:
-                        flat.append(item)
-                all_markets.extend(flat)
-                log.info(f"Got {len(flat)} items from {url}")
+                if r.status_code == 200:
+                    data = r.json()
+                    items = data if isinstance(data, list) else data.get("markets", [])
+                    all_markets.extend(items)
+                    log.info(f"Gamma {url[-50:]}: {len(items)} markets")
             except Exception as e:
-                log.warning(f"URL failed {url}: {e}")
+                log.warning(f"Gamma error: {e}")
 
-        # Deduplicate by conditionId
+        # Deduplicate
         seen = set()
         markets_dedup = []
         for m in all_markets:
-            cid = m.get("conditionId", m.get("condition_id", ""))
+            cid = m.get("conditionId") or m.get("condition_id") or m.get("id") or ""
             if cid and cid not in seen:
                 seen.add(cid)
                 markets_dedup.append(m)
 
         log.info(f"Total unique markets: {len(markets_dedup)}")
 
-        # Show BTC-related samples
-        btc_samples = []
+        # Find short-duration BTC markets (end within 30 minutes)
+        short_btc = []
         for m in markets_dedup:
-            slug  = (m.get("slug") or m.get("ticker") or "").lower()
-            title = (m.get("question") or m.get("title") or "").lower()
-            if any(k in slug or k in title for k in ["btc", "bitcoin"]):
-                btc_samples.append(f"{slug[:60]} | {title[:40]}")
-        log.info(f"BTC markets found ({len(btc_samples)}): {btc_samples[:10]}")
+            slug     = (m.get("slug") or m.get("ticker") or "").lower()
+            question = (m.get("question") or m.get("title") or "").lower()
+            combined = slug + " " + question
 
-        for m in markets_dedup:
-            slug  = (m.get("slug") or m.get("ticker") or "").lower()
-            title = (m.get("question") or m.get("title") or "").lower()
-            desc  = (m.get("description") or "").lower()
-            combined = slug + " " + title + " " + desc
-
-            is_btc = any(k in combined for k in ["btc", "bitcoin"])
-            is_5m  = any(k in combined for k in ["5m", "5-min", "5 min", "five min"])
-            is_15m = any(k in combined for k in ["15m", "15-min", "15 min", "fifteen min"])
-
-            if not is_btc:
+            if not any(k in combined for k in ["btc", "bitcoin"]):
                 continue
 
-            ticker = m.get("slug") or m.get("ticker") or ""
+            # Check end time - prefer markets ending soon
+            end_str = m.get("endDate") or m.get("end_date_iso") or ""
+            mins_left = 9999
+            if end_str:
+                try:
+                    end_str_clean = end_str.replace("Z", "+00:00")
+                    end_dt = dt.datetime.fromisoformat(end_str_clean)
+                    end_ts = int(end_dt.timestamp())
+                    mins_left = (end_ts - now_ts) / 60
+                except Exception:
+                    pass
+
+            short_btc.append((mins_left, slug, question[:50], m))
+
+        short_btc.sort(key=lambda x: x[0])
+        log.info(f"BTC markets by time remaining:")
+        for mins, slug, q, _ in short_btc[:15]:
+            log.info(f"  {mins:.0f}min | {slug[:40]} | {q}")
+
+        # Match 5m / 15m from short-duration markets or keyword match
+        for mins_left, slug, question, m in short_btc:
+            combined = slug + " " + question
+
+            is_5m  = any(k in combined for k in ["5m", "5-min", "5 min"]) or (0 < mins_left <= 6)
+            is_15m = any(k in combined for k in ["15m", "15-min", "15 min"]) or (6 < mins_left <= 16)
+
+            ticker = m.get("slug") or m.get("ticker") or slug
 
             try:
                 prices = m.get("outcomePrices", "[0.5,0.5]")
