@@ -198,10 +198,12 @@ class OrderBook:
 
     def get_live_prices(self, market: Dict) -> Tuple[Optional[float], Optional[float]]:
         """Return (yes_price, no_price): try CLOB market first, then order book."""
-        # Try CLOB market endpoint (most reliable for these short-duration markets)
+        # Try CLOB market endpoint
         yes_p, no_p = self.clob_prices(market.get("condition_id", ""))
         if yes_p is not None and no_p is not None:
-            return yes_p, no_p
+            # Validate: valid binary market prices must sum close to 1.0
+            if abs(yes_p + no_p - 1.0) <= 0.15:
+                return yes_p, no_p
         # Fall back to order book best ask
         yes_ask = self.best_ask(market["token_yes"])
         no_ask  = self.best_ask(market["token_no"])
