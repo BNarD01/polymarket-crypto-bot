@@ -235,33 +235,38 @@ class TradeExecutor:
                 if not pk.startswith("0x"):
                     pk = "0x" + pk
 
-                # Step 1: L1 client (no creds needed) — used to create a fresh API key
-                l1_client = ClobClient(host=POLYMARKET_CLOB, key=pk, chain_id=137)
-
-                # Step 2: Create/derive API key from private key (always fresh and valid)
-                try:
-                    creds = l1_client.create_api_key(nonce=0)
-                    log.info(f"Created API key: {creds.api_key}")
-                except Exception as e1:
-                    log.warning(f"create_api_key failed ({e1}), trying derive_api_key...")
+                # Try signature_type=1 first (Polymarket proxy wallet — standard web signup),
+                # then fall back to signature_type=0 (EOA direct)
+                creds = None
+                for sig_type in [1, 0]:
                     try:
-                        creds = l1_client.derive_api_key()
-                        log.info(f"Derived API key: {creds.api_key}")
-                    except Exception as e2:
-                        log.warning(f"derive_api_key also failed ({e2}), using config credentials")
-                        creds = ApiCreds(
-                            api_key=cfg["api_key"],
-                            api_secret=cfg["api_secret"],
-                            api_passphrase=cfg["api_passphrase"],
-                        )
+                        l1 = ClobClient(host=POLYMARKET_CLOB, key=pk, chain_id=137,
+                                        signature_type=sig_type)
+                        creds = l1.create_api_key(nonce=0)
+                        log.info(f"create_api_key OK (sig_type={sig_type}): {creds.api_key}")
+                        break
+                    except Exception as e:
+                        log.warning(f"create_api_key sig_type={sig_type} failed: {e}")
 
-                # Step 3: Full client with L2 credentials
+                if creds is None:
+                    # Last resort: use dashboard credentials from config
+                    log.warning("All create_api_key attempts failed, using config credentials")
+                    creds = ApiCreds(
+                        api_key=cfg["api_key"],
+                        api_secret=cfg["api_secret"],
+                        api_passphrase=cfg["api_passphrase"],
+                    )
+
+                log.info(f"Active API key: {creds.api_key}")
+
+                # Build the full authenticated client with the same signature_type
+                # that succeeded (or fallback to 1)
                 self._clob = ClobClient(
                     host=POLYMARKET_CLOB,
                     key=pk,
                     chain_id=137,
                     creds=creds,
-                    signature_type=0,   # 0=EOA (MetaMask direct wallet)
+                    signature_type=1,
                 )
                 log.info("CLOB client initialised (LIVE mode)")
             except ImportError:
