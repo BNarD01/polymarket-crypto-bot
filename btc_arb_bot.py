@@ -265,12 +265,8 @@ class TradeExecutor:
                         api_passphrase=cfg["api_passphrase"],
                     )
 
-                # Always use config credentials for the proxy wallet (not derived/EOA creds)
-                creds = ApiCreds(
-                    api_key=cfg["api_key"],
-                    api_secret=cfg["api_secret"],
-                    api_passphrase=cfg["api_passphrase"],
-                )
+                # Use DERIVED credentials (derive_api_key returns the proxy wallet's key)
+                # not the config key (which may be stale/revoked)
                 diag_lines.append(f"active api_key  : {creds.api_key}")
 
                 funder = cfg.get("funder_address", "").strip()
