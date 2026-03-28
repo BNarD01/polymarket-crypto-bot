@@ -235,42 +235,43 @@ class TradeExecutor:
                 if not pk.startswith("0x"):
                     pk = "0x" + pk
 
-                # ── Diagnostic: show the EOA address derived from private key ──
+                # ── Diagnostic: derive CLOB API key from private key ──
+                diag_lines = []
                 try:
                     from eth_account import Account as EthAccount
                     eoa = EthAccount.from_key(pk).address
-                    log.info(f"Private key -> EOA address: {eoa}")
+                    diag_lines.append(f"EOA address     : {eoa}")
                 except Exception as ex:
                     eoa = ""
-                    log.warning(f"Could not compute EOA address: {ex}")
+                    diag_lines.append(f"EOA address     : ERROR ({ex})")
 
-                # ── Diagnostic: compare derive_api_key vs config key ──
                 try:
                     l1 = ClobClient(host=POLYMARKET_CLOB, key=pk, chain_id=137)
                     derived = l1.derive_api_key()
-                    derived_key = derived.api_key if hasattr(derived, "api_key") else str(derived)
-                    config_key  = cfg["api_key"]
-                    log.info(f"derive_api_key result : {derived_key}")
-                    log.info(f"config.json api_key   : {config_key}")
-                    if derived_key == config_key:
-                        log.info("Keys MATCH - using config credentials")
-                        creds = ApiCreds(
-                            api_key=cfg["api_key"],
-                            api_secret=cfg["api_secret"],
-                            api_passphrase=cfg["api_passphrase"],
-                        )
-                    else:
-                        log.warning("Keys DIFFER - derived key != config key; will try both")
-                        creds = derived   # use the derived (correct) creds first
+                    derived_key    = derived.api_key    if hasattr(derived, "api_key")    else ""
+                    derived_secret = derived.api_secret if hasattr(derived, "api_secret") else ""
+                    derived_pass   = derived.api_passphrase if hasattr(derived, "api_passphrase") else ""
+                    diag_lines.append(f"derived api_key : {derived_key}")
+                    diag_lines.append(f"config  api_key : {cfg['api_key']}")
+                    diag_lines.append(f"keys match      : {derived_key == cfg['api_key']}")
+                    # Always use derived credentials (they are freshly signed for this wallet)
+                    creds = derived
                 except Exception as e:
-                    log.warning(f"derive_api_key failed: {e}")
+                    diag_lines.append(f"derive_api_key  : FAILED ({e})")
+                    diag_lines.append(f"config  api_key : {cfg['api_key']}")
                     creds = ApiCreds(
                         api_key=cfg["api_key"],
                         api_secret=cfg["api_secret"],
                         api_passphrase=cfg["api_passphrase"],
                     )
 
-                log.info(f"Active API key: {creds.api_key}")
+                diag_lines.append(f"active api_key  : {creds.api_key}")
+
+                # Write diagnostic to file so it doesn't scroll away
+                with open("diagnostic.txt", "w") as _f:
+                    _f.write("\n".join(diag_lines) + "\n")
+                for line in diag_lines:
+                    log.info(f"[DIAG] {line}")
 
                 self._clob = ClobClient(
                     host=POLYMARKET_CLOB,
