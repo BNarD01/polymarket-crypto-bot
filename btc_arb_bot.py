@@ -239,11 +239,15 @@ class TradeExecutor:
                 try:
                     l1 = ClobClient(host=POLYMARKET_CLOB, key=pk, chain_id=137)
                     derived = l1.derive_api_key()
-                    creds = ApiCreds(
-                        api_key=derived.get("apiKey") or derived.get("api_key", cfg["api_key"]),
-                        api_secret=derived.get("secret", cfg["api_secret"]),
-                        api_passphrase=derived.get("passphrase", cfg["api_passphrase"]),
-                    )
+                    # derive_api_key returns ApiCreds object (not dict) — use attribute access
+                    if hasattr(derived, "api_key"):
+                        creds = derived  # already an ApiCreds object
+                    else:
+                        creds = ApiCreds(
+                            api_key=derived.get("apiKey") or derived.get("api_key", cfg["api_key"]),
+                            api_secret=derived.get("secret", cfg["api_secret"]),
+                            api_passphrase=derived.get("passphrase", cfg["api_passphrase"]),
+                        )
                     log.info(f"Derived API key: {creds.api_key}")
                 except Exception as e:
                     log.warning(f"derive_api_key failed ({e}), using config credentials")
