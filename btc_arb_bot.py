@@ -122,9 +122,14 @@ class MarketFinder:
                                 tokens = json.loads(tokens)
                         except Exception:
                             continue
-                        # Skip already-resolved markets (price at 0 or 1)
+                        # Skip resolved/bad markets
+                        # Valid binary market: YES+NO ≈ 1.0 and neither at extreme
+                        price_sum = yes_price + no_price
                         if yes_price <= 0.01 or yes_price >= 0.99:
                             log.info(f"Skipping resolved market: {slug} YES={yes_price:.4f}")
+                            continue
+                        if abs(price_sum - 1.0) > 0.15:
+                            log.info(f"Skipping bad-data market: {slug} sum={price_sum:.4f}")
                             continue
                         result[label] = {
                             "condition_id": m.get("conditionId", ""),
@@ -157,22 +162,47 @@ class OrderBook:
         if not token_id:
             return None
         try:
-            path = f"/book?token_id={token_id}"
-            url  = POLYMARKET_CLOB + path
-            r    = self.session.get(url, timeout=10)
+            r = self.session.get(f"{POLYMARKET_CLOB}/book?token_id={token_id}", timeout=10)
+            if r.status_code == 404:
+                return None  # No order book yet (thin market)
             r.raise_for_status()
-            book = r.json()
-            asks = book.get("asks", [])
+            asks = r.json().get("asks", [])
             if not asks:
                 return None
-            # asks sorted ascending by price
             return float(asks[0]["price"])
-        except Exception as e:
-            log.warning(f"Order book error for token {token_id}: {e}")
+        except Exception:
             return None
 
+    def clob_prices(self, condition_id: str) -> Tuple[Optional[float], Optional[float]]:
+        """Get YES/NO mid prices directly from CLOB market endpoint."""
+        if not condition_id:
+            return None, None
+        try:
+            r = self.session.get(f"{POLYMARKET_CLOB}/markets/{condition_id}", timeout=10)
+            if r.status_code != 200:
+                return None, None
+            m = r.json()
+            tokens = m.get("tokens", [])
+            yes_p = no_p = None
+            for t in tokens:
+                outcome = t.get("outcome", "").upper()
+                price   = t.get("price")
+                if price is not None:
+                    if outcome == "YES":
+                        yes_p = float(price)
+                    elif outcome == "NO":
+                        no_p = float(price)
+            return yes_p, no_p
+        except Exception:
+            return None, None
+
     def get_live_prices(self, market: Dict) -> Tuple[Optional[float], Optional[float]]:
-        """Return (yes_ask, no_ask) from live order book."""
+        """Return (yes_price, no_price): try CLOB market first, then order book."""
+        # Try CLOB market endpoint (most reliable for these short-duration markets)
+        yes_p, no_p = self.clob_prices(market.get("condition_id", ""))
+        if yes_p is not None and no_p is not None:
+            return yes_p, no_p
+        # Fall back to order book best ask
         yes_ask = self.best_ask(market["token_yes"])
         no_ask  = self.best_ask(market["token_no"])
         return yes_ask, no_ask
