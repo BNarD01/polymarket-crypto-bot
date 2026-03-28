@@ -248,26 +248,34 @@ class TradeExecutor:
                 try:
                     l1 = ClobClient(host=POLYMARKET_CLOB, key=pk, chain_id=137)
                     derived = l1.derive_api_key()
-                    derived_key    = derived.api_key    if hasattr(derived, "api_key")    else ""
-                    derived_secret = derived.api_secret if hasattr(derived, "api_secret") else ""
+                    derived_key    = derived.api_key        if hasattr(derived, "api_key")        else ""
+                    derived_secret = derived.api_secret     if hasattr(derived, "api_secret")     else ""
                     derived_pass   = derived.api_passphrase if hasattr(derived, "api_passphrase") else ""
-                    diag_lines.append(f"derived api_key : {derived_key}")
-                    diag_lines.append(f"config  api_key : {cfg['api_key']}")
-                    diag_lines.append(f"keys match      : {derived_key == cfg['api_key']}")
+                    diag_lines.append(f"derived api_key    : {derived_key}")
+                    diag_lines.append(f"derived api_secret : {derived_secret}")
+                    diag_lines.append(f"derived api_pass   : {derived_pass}")
+                    diag_lines.append(f"config  api_key    : {cfg['api_key']}")
+                    diag_lines.append(f"keys match         : {derived_key == cfg['api_key']}")
                     # Always use derived credentials (they are freshly signed for this wallet)
                     creds = derived
+                    # Also auto-update config.json so next run uses correct credentials
+                    cfg["api_key"]        = derived_key
+                    cfg["api_secret"]     = derived_secret
+                    cfg["api_passphrase"] = derived_pass
+                    with open("config.json", "w") as _cf:
+                        import json as _json
+                        _json.dump(cfg, _cf, indent=2)
+                    diag_lines.append("config.json updated with derived credentials")
                 except Exception as e:
-                    diag_lines.append(f"derive_api_key  : FAILED ({e})")
-                    diag_lines.append(f"config  api_key : {cfg['api_key']}")
+                    diag_lines.append(f"derive_api_key     : FAILED ({e})")
+                    diag_lines.append(f"config  api_key    : {cfg['api_key']}")
                     creds = ApiCreds(
                         api_key=cfg["api_key"],
                         api_secret=cfg["api_secret"],
                         api_passphrase=cfg["api_passphrase"],
                     )
 
-                # Use DERIVED credentials (derive_api_key returns the proxy wallet's key)
-                # not the config key (which may be stale/revoked)
-                diag_lines.append(f"active api_key  : {creds.api_key}")
+                diag_lines.append(f"active api_key     : {creds.api_key}")
 
                 funder = cfg.get("funder_address", "").strip()
                 diag_lines.append(f"funder (proxy)  : {funder or '(not set)'}")
