@@ -333,10 +333,17 @@ class TradeExecutor:
                 log.warning(f"Orderbook check failed for {token_id[:12]}... ({ob_err}), skipping.")
                 return None
 
+            # Polymarket requires: makerAmount (size*price in USDC) ≤ 2 decimals,
+            # takerAmount (size in shares) ≤ 4 decimals.
+            # Recompute size so that size * price rounds to exactly 2 decimal places.
+            price_r = round(price, 4)
+            maker_usdc = round(size * price_r, 2)          # USDC to spend (2 dp)
+            size_r    = round(maker_usdc / price_r, 4)     # shares to receive (4 dp)
+
             order_args = OrderArgs(
                 token_id=token_id,
-                price=round(price, 4),
-                size=round(size, 2),
+                price=price_r,
+                size=size_r,
                 side=BUY if side == "BUY" else SELL,
             )
             signed_order = self._clob.create_order(order_args)
