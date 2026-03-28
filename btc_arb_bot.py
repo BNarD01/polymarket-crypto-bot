@@ -197,17 +197,8 @@ class OrderBook:
             return None, None
 
     def get_live_prices(self, market: Dict) -> Tuple[Optional[float], Optional[float]]:
-        """Return (yes_price, no_price): try CLOB market first, then order book."""
-        # Try CLOB market endpoint
-        yes_p, no_p = self.clob_prices(market.get("condition_id", ""))
-        if yes_p is not None and no_p is not None:
-            # Validate: valid binary market prices must sum close to 1.0
-            if abs(yes_p + no_p - 1.0) <= 0.15:
-                return yes_p, no_p
-        # Fall back to order book best ask
-        yes_ask = self.best_ask(market["token_yes"])
-        no_ask  = self.best_ask(market["token_no"])
-        return yes_ask, no_ask
+        """Return None, None — short-duration markets use Gamma prices (more reliable than CLOB)."""
+        return None, None
 
 
 # ─── Trade executor ────────────────────────────────────────────────────────────
@@ -295,7 +286,7 @@ class ArbEngine:
     FEE_RATE         = 0.02           # per-side taker fee estimate
     MIN_PROFIT_A     = 0.01           # 1% net after fees
     MIN_SPREAD_B     = 0.08           # 8% price gap for cross-market trade
-    MAX_TRADE_USDC   = 15.0           # max USDC per leg
+    MAX_TRADE_USDC   = 10.0           # max USDC per leg to preserve budget
 
     def __init__(self, ob: OrderBook, executor: TradeExecutor, tg: Telegram,
                  budget: float, cfg: Dict):
