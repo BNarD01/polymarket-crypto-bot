@@ -85,125 +85,61 @@ class MarketFinder:
         Each dict has keys: condition_id, token_yes, token_no, yes_price, no_price, ticker
         """
         result: Dict[str, Optional[Dict]] = {"5m": None, "15m": None}
-        import datetime as dt
 
         now_ts = int(time.time())
+        # Round to current 5-min and 15-min interval boundaries
+        # Polymarket slug pattern: btc-updown-5m-{timestamp}  btc-updown-15m-{timestamp}
+        ts_5m  = (now_ts // 300) * 300   # floor to 5-min boundary
+        ts_15m = (now_ts // 900) * 900   # floor to 15-min boundary
 
-        # Search CLOB API and Gamma API for short-duration BTC markets
-        all_markets = []
+        # Try current and adjacent intervals (in case of clock skew)
+        slugs_to_try = {
+            "5m":  [f"btc-updown-5m-{ts_5m + i*300}"  for i in range(-1, 3)],
+            "15m": [f"btc-updown-15m-{ts_15m + i*900}" for i in range(-1, 3)],
+        }
 
-        # 1. CLOB API - search by keyword
-        for keyword in ["btc", "bitcoin"]:
-            try:
-                url = f"{POLYMARKET_CLOB}/markets?search={keyword}&active=true&closed=false&limit=100"
-                r = self.session.get(url, timeout=10)
-                if r.status_code == 200:
-                    data = r.json()
-                    items = data if isinstance(data, list) else data.get("markets", [])
-                    all_markets.extend(items)
-                    log.info(f"CLOB search '{keyword}': {len(items)} markets")
-            except Exception as e:
-                log.warning(f"CLOB search error: {e}")
-
-        # 2. Gamma API markets
-        for url in [
-            f"{GAMMA_API}/markets?active=true&closed=false&tag=crypto-price&limit=500",
-            f"{GAMMA_API}/markets?active=true&closed=false&limit=500",
-        ]:
-            try:
-                r = self.session.get(url, timeout=10)
-                if r.status_code == 200:
-                    data = r.json()
-                    items = data if isinstance(data, list) else data.get("markets", [])
-                    all_markets.extend(items)
-                    log.info(f"Gamma {url[-50:]}: {len(items)} markets")
-            except Exception as e:
-                log.warning(f"Gamma error: {e}")
-
-        # Deduplicate
-        seen = set()
-        markets_dedup = []
-        for m in all_markets:
-            cid = m.get("conditionId") or m.get("condition_id") or m.get("id") or ""
-            if cid and cid not in seen:
-                seen.add(cid)
-                markets_dedup.append(m)
-
-        log.info(f"Total unique markets: {len(markets_dedup)}")
-
-        # Find short-duration BTC markets (end within 30 minutes)
-        short_btc = []
-        for m in markets_dedup:
-            slug     = (m.get("slug") or m.get("ticker") or "").lower()
-            question = (m.get("question") or m.get("title") or "").lower()
-            combined = slug + " " + question
-
-            if not any(k in combined for k in ["btc", "bitcoin"]):
-                continue
-
-            # Check end time - prefer markets ending soon
-            end_str = m.get("endDate") or m.get("end_date_iso") or ""
-            mins_left = 9999
-            if end_str:
+        for label, slug_list in slugs_to_try.items():
+            for slug in slug_list:
                 try:
-                    end_str_clean = end_str.replace("Z", "+00:00")
-                    end_dt = dt.datetime.fromisoformat(end_str_clean)
-                    end_ts = int(end_dt.timestamp())
-                    mins_left = (end_ts - now_ts) / 60
-                except Exception:
-                    pass
-
-            short_btc.append((mins_left, slug, question[:50], m))
-
-        short_btc.sort(key=lambda x: x[0])
-        log.info(f"BTC markets by time remaining:")
-        for mins, slug, q, _ in short_btc[:15]:
-            log.info(f"  {mins:.0f}min | {slug[:40]} | {q}")
-
-        # Match 5m / 15m from short-duration markets or keyword match
-        for mins_left, slug, question, m in short_btc:
-            combined = slug + " " + question
-
-            is_5m  = any(k in combined for k in ["5m", "5-min", "5 min"]) or (0 < mins_left <= 6)
-            is_15m = any(k in combined for k in ["15m", "15-min", "15 min"]) or (6 < mins_left <= 16)
-
-            ticker = m.get("slug") or m.get("ticker") or slug
-
-            try:
-                prices = m.get("outcomePrices", "[0.5,0.5]")
-                if isinstance(prices, str):
-                    prices = json.loads(prices)
-                yes_price = float(prices[0]) if len(prices) > 0 else 0.5
-                no_price  = float(prices[1]) if len(prices) > 1 else 0.5
-                tokens = m.get("clobTokenIds", "[]")
-                if isinstance(tokens, str):
-                    tokens = json.loads(tokens)
-                if not isinstance(tokens, list):
-                    tokens = []
-            except Exception:
-                continue
-
-            info = {
-                "condition_id": m.get("conditionId", ""),
-                "token_yes":    tokens[0] if len(tokens) > 0 else "",
-                "token_no":     tokens[1] if len(tokens) > 1 else "",
-                "yes_price":    yes_price,
-                "no_price":     no_price,
-                "ticker":       ticker,
-                "slug":         slug,
-            }
-
-            if is_5m and result["5m"] is None:
-                result["5m"] = info
-                log.info(f"Found 5m market: {ticker}  YES={yes_price:.4f}  NO={no_price:.4f}")
-            elif is_15m and result["15m"] is None:
-                result["15m"] = info
-                log.info(f"Found 15m market: {ticker}  YES={yes_price:.4f}  NO={no_price:.4f}")
-
-            if result["5m"] and result["15m"]:
-                break
+                    url = f"{GAMMA_API}/events?slug={slug}"
+                    r = self.session.get(url, timeout=10)
+                    if r.status_code != 200:
+                        continue
+                    data = r.json()
+                    events = data if isinstance(data, list) else [data]
+                    for event in events:
+                        if not event or not event.get("markets"):
+                            continue
+                        m = event["markets"][0]
+                        try:
+                            prices = m.get("outcomePrices", "[0.5,0.5]")
+                            if isinstance(prices, str):
+                                prices = json.loads(prices)
+                            yes_price = float(prices[0]) if prices else 0.5
+                            no_price  = float(prices[1]) if len(prices) > 1 else 0.5
+                            tokens = m.get("clobTokenIds", "[]")
+                            if isinstance(tokens, str):
+                                tokens = json.loads(tokens)
+                        except Exception:
+                            continue
+                        result[label] = {
+                            "condition_id": m.get("conditionId", ""),
+                            "token_yes":    tokens[0] if len(tokens) > 0 else "",
+                            "token_no":     tokens[1] if len(tokens) > 1 else "",
+                            "yes_price":    yes_price,
+                            "no_price":     no_price,
+                            "ticker":       slug,
+                            "slug":         slug,
+                        }
+                        log.info(f"Found {label} market: {slug}  YES={yes_price:.4f}  NO={no_price:.4f}")
+                        break
+                except Exception as e:
+                    log.warning(f"Slug lookup error {slug}: {e}")
+                if result[label]:
+                    break
 
         return result
+
 
 
 # ─── Order book ────────────────────────────────────────────────────────────────
