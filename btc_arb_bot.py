@@ -12,6 +12,7 @@ import sys
 import time
 import json
 import hmac
+import base64
 import hashlib
 import logging
 import requests
@@ -69,15 +70,15 @@ def load_config() -> Dict:
 def clob_headers(cfg: Dict, method: str, path: str, body: str = "") -> Dict:
     """
     Polymarket CLOB L2 auth header.
-    Signature = HMAC-SHA256(timestamp + method + path + body, secret)
+    Secret is base64-encoded; decode it first.
+    Signature = base64(HMAC-SHA256(timestamp + method + path + body, decoded_secret))
     """
     ts = str(int(time.time()))
     msg = ts + method.upper() + path + body
-    sig = hmac.new(
-        cfg["api_secret"].encode(),
-        msg.encode(),
-        hashlib.sha256,
-    ).hexdigest()
+    secret = base64.b64decode(cfg["api_secret"])
+    sig = base64.b64encode(
+        hmac.new(secret, msg.encode(), hashlib.sha256).digest()
+    ).decode()
     return {
         "POLY-API-KEY":        cfg["api_key"],
         "POLY-SIGNATURE":      sig,
