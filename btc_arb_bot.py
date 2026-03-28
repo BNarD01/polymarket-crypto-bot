@@ -240,38 +240,36 @@ class TradeExecutor:
                     from eth_account import Account as EthAccount
                     eoa = EthAccount.from_key(pk).address
                     log.info(f"Private key -> EOA address: {eoa}")
-                    log.info(">>> Compare this address to your Polymarket wallet address <<<")
                 except Exception as ex:
+                    eoa = ""
                     log.warning(f"Could not compute EOA address: {ex}")
 
-                # ── Diagnostic: test config credentials with a direct HMAC call ──
-                import hmac as _hmac, hashlib as _hl, base64 as _b64, time as _time
+                # ── Diagnostic: compare derive_api_key vs config key ──
                 try:
-                    ts  = str(int(_time.time()))
-                    msg = (ts + "GET" + "/auth/api-key").encode()
-                    raw_secret = _b64.b64decode(cfg["api_secret"])
-                    sig = _b64.b64encode(_hmac.new(raw_secret, msg, _hl.sha256).digest()).decode()
-                    r = requests.get(
-                        f"{POLYMARKET_CLOB}/auth/api-key",
-                        headers={
-                            "POLY_ADDRESS":    eoa if 'eoa' in dir() else "",
-                            "POLY_SIGNATURE":  sig,
-                            "POLY_TIMESTAMP":  ts,
-                            "POLY_API_KEY":    cfg["api_key"],
-                            "POLY_PASSPHRASE": cfg["api_passphrase"],
-                        },
-                        timeout=10,
+                    l1 = ClobClient(host=POLYMARKET_CLOB, key=pk, chain_id=137)
+                    derived = l1.derive_api_key()
+                    derived_key = derived.api_key if hasattr(derived, "api_key") else str(derived)
+                    config_key  = cfg["api_key"]
+                    log.info(f"derive_api_key result : {derived_key}")
+                    log.info(f"config.json api_key   : {config_key}")
+                    if derived_key == config_key:
+                        log.info("Keys MATCH - using config credentials")
+                        creds = ApiCreds(
+                            api_key=cfg["api_key"],
+                            api_secret=cfg["api_secret"],
+                            api_passphrase=cfg["api_passphrase"],
+                        )
+                    else:
+                        log.warning("Keys DIFFER - derived key != config key; will try both")
+                        creds = derived   # use the derived (correct) creds first
+                except Exception as e:
+                    log.warning(f"derive_api_key failed: {e}")
+                    creds = ApiCreds(
+                        api_key=cfg["api_key"],
+                        api_secret=cfg["api_secret"],
+                        api_passphrase=cfg["api_passphrase"],
                     )
-                    log.info(f"Config credentials test: HTTP {r.status_code} — {r.text[:120]}")
-                except Exception as ex:
-                    log.warning(f"Credential test error: {ex}")
 
-                # Use config credentials
-                creds = ApiCreds(
-                    api_key=cfg["api_key"],
-                    api_secret=cfg["api_secret"],
-                    api_passphrase=cfg["api_passphrase"],
-                )
                 log.info(f"Active API key: {creds.api_key}")
 
                 self._clob = ClobClient(
