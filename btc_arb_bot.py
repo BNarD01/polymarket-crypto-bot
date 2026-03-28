@@ -243,7 +243,7 @@ class TradeExecutor:
                         api_secret=cfg["api_secret"],
                         api_passphrase=cfg["api_passphrase"],
                     ),
-                    signature_type=0,   # 0=EOA(MetaMask), 1=Polymarket proxy
+                    signature_type=1,   # 1=Polymarket proxy (default for web signup)
                 )
                 log.info("CLOB client initialised (LIVE mode)")
             except ImportError:
