@@ -269,7 +269,11 @@ class TradeExecutor:
             return {"status": "dry_run"}
 
         try:
-            from py_clob_client.clob_types import OrderArgs, OrderType, BUY, SELL
+            from py_clob_client.clob_types import OrderArgs, OrderType
+            try:
+                from py_clob_client.clob_types import BUY, SELL
+            except ImportError:
+                BUY, SELL = 0, 1   # fallback for newer versions
             order_args = OrderArgs(
                 token_id=token_id,
                 price=round(price, 4),
