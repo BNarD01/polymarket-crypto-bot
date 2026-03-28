@@ -270,11 +270,12 @@ class TradeExecutor:
 
         try:
             from py_clob_client.clob_types import OrderArgs, OrderType
+            from py_clob_client.order_builder.builder import BUY, SELL
             order_args = OrderArgs(
                 token_id=token_id,
                 price=round(price, 4),
                 size=round(size, 2),
-                side=side,   # 'BUY' or 'SELL' string directly
+                side=BUY if side == "BUY" else SELL,
             )
             signed_order = self._clob.create_order(order_args)
             resp = self._clob.post_order(signed_order, OrderType.FOK)
