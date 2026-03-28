@@ -64,6 +64,10 @@ def load_config() -> Dict:
         if not cfg.get(key):
             log.error(f"Missing required config key: {key}")
             sys.exit(1)
+    if not cfg.get("dry_run", True) and not cfg.get("private_key"):
+        log.error("private_key is required in config.json for live trading (dry_run=false).")
+        log.error("Get it from MetaMask: Account details -> Show private key")
+        sys.exit(1)
     return cfg
 
 
@@ -221,45 +225,58 @@ class TradeExecutor:
         self.session = session
         self.cfg     = cfg
         self.dry_run = cfg.get("dry_run", True)
+        self._clob   = None
+
+        if not self.dry_run:
+            try:
+                from py_clob_client.client import ClobClient
+                from py_clob_client.clob_types import ApiCreds
+                self._clob = ClobClient(
+                    host=POLYMARKET_CLOB,
+                    key=cfg["private_key"],
+                    chain_id=137,   # Polygon mainnet
+                    creds=ApiCreds(
+                        api_key=cfg["api_key"],
+                        api_secret=cfg["api_secret"],
+                        api_passphrase=cfg["api_passphrase"],
+                    ),
+                    signature_type=0,   # 0=EOA(MetaMask), 1=Polymarket proxy
+                )
+                log.info("CLOB client initialised (LIVE mode)")
+            except ImportError:
+                log.error("py-clob-client not installed. Run: pip install py-clob-client")
+                sys.exit(1)
+            except Exception as e:
+                log.error(f"CLOB client init error: {e}")
+                sys.exit(1)
 
     def place_order(self, token_id: str, side: str, size: float, price: float) -> Optional[Dict]:
         """
-        Place a limit order on the CLOB.
+        Place a FOK order on the CLOB.
         side: 'BUY' | 'SELL'
-        Returns order response dict or None on failure.
         """
         if not token_id:
             log.warning("place_order called with empty token_id, skipping.")
             return None
 
-        payload = {
-            "token_id": token_id,
-            "side":     side,
-            "price":    round(price, 4),
-            "size":     round(size, 2),
-            "type":     "FOK",     # Fill-or-Kill for arb
-        }
-        body = json.dumps(payload, separators=(",", ":"))
+        info = f"token={token_id[:12]}... size={size:.2f} price={price:.4f}"
 
         if self.dry_run:
-            log.info(f"[DRY RUN] Would place {side} order: token={token_id[:12]}... "
-                     f"size={size:.2f} price={price:.4f}")
-            return {"status": "dry_run", "payload": payload}
+            log.info(f"[DRY RUN] Would place {side} order: {info}")
+            return {"status": "dry_run"}
 
-        path = "/order"
-        headers = clob_headers(self.cfg, "POST", path, body)
         try:
-            r = self.session.post(
-                POLYMARKET_CLOB + path,
-                headers=headers,
-                data=body,
-                timeout=10,
+            from py_clob_client.clob_types import OrderArgs, OrderType, BUY, SELL
+            order_args = OrderArgs(
+                token_id=token_id,
+                price=round(price, 4),
+                size=round(size, 2),
+                side=BUY if side == "BUY" else SELL,
             )
-            r.raise_for_status()
-            return r.json()
-        except requests.HTTPError as e:
-            log.error(f"Order placement HTTP error: {e} | Response: {e.response.text[:300]}")
-            return None
+            signed_order = self._clob.create_order(order_args)
+            resp = self._clob.post_order(signed_order, OrderType.FOK)
+            log.info(f"Order placed: {side} {info} | resp={resp}")
+            return resp if resp else None
         except Exception as e:
             log.error(f"Order placement error: {e}")
             return None
