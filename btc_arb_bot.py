@@ -235,20 +235,33 @@ class TradeExecutor:
                 if not pk.startswith("0x"):
                     pk = "0x" + pk
 
-                # Use dashboard API credentials (proxy wallet account, standard web signup)
-                creds = ApiCreds(
-                    api_key=cfg["api_key"],
-                    api_secret=cfg["api_secret"],
-                    api_passphrase=cfg["api_passphrase"],
-                )
-                log.info(f"Using API key: {creds.api_key}")
+                # Step 1: L1 client (no creds needed) — used to create a fresh API key
+                l1_client = ClobClient(host=POLYMARKET_CLOB, key=pk, chain_id=137)
 
+                # Step 2: Create/derive API key from private key (always fresh and valid)
+                try:
+                    creds = l1_client.create_api_key(nonce=0)
+                    log.info(f"Created API key: {creds.api_key}")
+                except Exception as e1:
+                    log.warning(f"create_api_key failed ({e1}), trying derive_api_key...")
+                    try:
+                        creds = l1_client.derive_api_key()
+                        log.info(f"Derived API key: {creds.api_key}")
+                    except Exception as e2:
+                        log.warning(f"derive_api_key also failed ({e2}), using config credentials")
+                        creds = ApiCreds(
+                            api_key=cfg["api_key"],
+                            api_secret=cfg["api_secret"],
+                            api_passphrase=cfg["api_passphrase"],
+                        )
+
+                # Step 3: Full client with L2 credentials
                 self._clob = ClobClient(
                     host=POLYMARKET_CLOB,
                     key=pk,
                     chain_id=137,
                     creds=creds,
-                    signature_type=1,   # 1 = Polymarket proxy wallet (standard for web/MetaMask users)
+                    signature_type=0,   # 0=EOA (MetaMask direct wallet)
                 )
                 log.info("CLOB client initialised (LIVE mode)")
             except ImportError:
