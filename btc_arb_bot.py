@@ -371,12 +371,13 @@ class ArbEngine:
                 self.recovered += revenue
                 closed.append(pos)
                 msg = (
-                    f"<b>Position closed [{pos.label}]</b> — {reason}\n"
-                    f"Entry: {pos.entry_price:.4f} → Exit: {current:.4f}\n"
+                    f"<b>Position closed [{pos.label}]</b> - {reason}\n"
+                    f"Entry: {pos.entry_price:.4f} -&gt; Exit: {current:.4f}\n"
                     f"Qty: {pos.quantity:.2f} | Realized P&amp;L: <b>${realized:+.4f}</b>\n"
                     f"Budget available: ${self.available:.2f}"
                 )
-                log.info(msg.replace("<b>", "").replace("</b>", "").replace("&amp;", "&"))
+                log.info(msg.replace("<b>", "").replace("</b>", "")
+                         .replace("&amp;", "&").replace("-&gt;", "->"))
                 self.tg.send(msg)
         for pos in closed:
             self.positions.remove(pos)
