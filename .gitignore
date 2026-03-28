@@ -2,3 +2,5 @@ config.json
 btc_arb.log
 whale_hunter.log
 *.log
+__pycache__/
+*.pyc
