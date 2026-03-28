@@ -235,32 +235,45 @@ class TradeExecutor:
                 if not pk.startswith("0x"):
                     pk = "0x" + pk
 
-                # Try signature_type=1 first (Polymarket proxy wallet — standard web signup),
-                # then fall back to signature_type=0 (EOA direct)
-                creds = None
-                for sig_type in [1, 0]:
-                    try:
-                        l1 = ClobClient(host=POLYMARKET_CLOB, key=pk, chain_id=137,
-                                        signature_type=sig_type)
-                        creds = l1.create_api_key(nonce=0)
-                        log.info(f"create_api_key OK (sig_type={sig_type}): {creds.api_key}")
-                        break
-                    except Exception as e:
-                        log.warning(f"create_api_key sig_type={sig_type} failed: {e}")
+                # ── Diagnostic: show the EOA address derived from private key ──
+                try:
+                    from eth_account import Account as EthAccount
+                    eoa = EthAccount.from_key(pk).address
+                    log.info(f"Private key -> EOA address: {eoa}")
+                    log.info(">>> Compare this address to your Polymarket wallet address <<<")
+                except Exception as ex:
+                    log.warning(f"Could not compute EOA address: {ex}")
 
-                if creds is None:
-                    # Last resort: use dashboard credentials from config
-                    log.warning("All create_api_key attempts failed, using config credentials")
-                    creds = ApiCreds(
-                        api_key=cfg["api_key"],
-                        api_secret=cfg["api_secret"],
-                        api_passphrase=cfg["api_passphrase"],
+                # ── Diagnostic: test config credentials with a direct HMAC call ──
+                import hmac as _hmac, hashlib as _hl, base64 as _b64, time as _time
+                try:
+                    ts  = str(int(_time.time()))
+                    msg = (ts + "GET" + "/auth/api-key").encode()
+                    raw_secret = _b64.b64decode(cfg["api_secret"])
+                    sig = _b64.b64encode(_hmac.new(raw_secret, msg, _hl.sha256).digest()).decode()
+                    r = requests.get(
+                        f"{POLYMARKET_CLOB}/auth/api-key",
+                        headers={
+                            "POLY_ADDRESS":    eoa if 'eoa' in dir() else "",
+                            "POLY_SIGNATURE":  sig,
+                            "POLY_TIMESTAMP":  ts,
+                            "POLY_API_KEY":    cfg["api_key"],
+                            "POLY_PASSPHRASE": cfg["api_passphrase"],
+                        },
+                        timeout=10,
                     )
+                    log.info(f"Config credentials test: HTTP {r.status_code} — {r.text[:120]}")
+                except Exception as ex:
+                    log.warning(f"Credential test error: {ex}")
 
+                # Use config credentials
+                creds = ApiCreds(
+                    api_key=cfg["api_key"],
+                    api_secret=cfg["api_secret"],
+                    api_passphrase=cfg["api_passphrase"],
+                )
                 log.info(f"Active API key: {creds.api_key}")
 
-                # Build the full authenticated client with the same signature_type
-                # that succeeded (or fallback to 1)
                 self._clob = ClobClient(
                     host=POLYMARKET_CLOB,
                     key=pk,
