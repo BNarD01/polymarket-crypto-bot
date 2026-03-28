@@ -265,7 +265,16 @@ class TradeExecutor:
                         api_passphrase=cfg["api_passphrase"],
                     )
 
+                # Always use config credentials for the proxy wallet (not derived/EOA creds)
+                creds = ApiCreds(
+                    api_key=cfg["api_key"],
+                    api_secret=cfg["api_secret"],
+                    api_passphrase=cfg["api_passphrase"],
+                )
                 diag_lines.append(f"active api_key  : {creds.api_key}")
+
+                funder = cfg.get("funder_address", "").strip()
+                diag_lines.append(f"funder (proxy)  : {funder or '(not set)'}")
 
                 # Write diagnostic to file so it doesn't scroll away
                 with open("diagnostic.txt", "w") as _f:
@@ -273,12 +282,16 @@ class TradeExecutor:
                 for line in diag_lines:
                     log.info(f"[DIAG] {line}")
 
+                # signature_type=1 = Polymarket proxy wallet (smart contract)
+                # funder = proxy wallet address (0x3878ce...)
+                # key    = EOA private key that controls the proxy wallet
                 self._clob = ClobClient(
                     host=POLYMARKET_CLOB,
                     key=pk,
                     chain_id=137,
                     creds=creds,
                     signature_type=1,
+                    funder=funder if funder else None,
                 )
                 log.info("CLOB client initialised (LIVE mode)")
             except ImportError:
