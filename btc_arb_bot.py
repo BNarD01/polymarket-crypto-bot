@@ -270,15 +270,11 @@ class TradeExecutor:
 
         try:
             from py_clob_client.clob_types import OrderArgs, OrderType
-            try:
-                from py_clob_client.clob_types import BUY, SELL
-            except ImportError:
-                BUY, SELL = 0, 1   # fallback for newer versions
             order_args = OrderArgs(
                 token_id=token_id,
                 price=round(price, 4),
                 size=round(size, 2),
-                side=BUY if side == "BUY" else SELL,
+                side=side,   # 'BUY' or 'SELL' string directly
             )
             signed_order = self._clob.create_order(order_args)
             resp = self._clob.post_order(signed_order, OrderType.FOK)
