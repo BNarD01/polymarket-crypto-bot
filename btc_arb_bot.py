@@ -85,63 +85,83 @@ class MarketFinder:
         Each dict has keys: condition_id, token_yes, token_no, yes_price, no_price, ticker
         """
         result: Dict[str, Optional[Dict]] = {"5m": None, "15m": None}
-        # Try multiple search strategies
-        urls = [
-            f"{GAMMA_API}/events?active=true&closed=false&tag=crypto&limit=100",
-            f"{GAMMA_API}/events?active=true&closed=false&limit=200",
-            f"{GAMMA_API}/markets?active=true&closed=false&tag=crypto&limit=200",
+
+        # Polymarket short-duration crypto markets use the markets endpoint with specific tags
+        search_urls = [
+            f"{GAMMA_API}/markets?active=true&closed=false&tag=crypto-price&limit=100",
+            f"{GAMMA_API}/markets?active=true&closed=false&tag=bitcoin&limit=100",
+            f"{GAMMA_API}/markets?active=true&closed=false&slug=btc&limit=100",
+            f"{GAMMA_API}/events?active=true&closed=false&tag=crypto-price&limit=100",
+            f"{GAMMA_API}/events?active=true&closed=false&tag=bitcoin&limit=100",
+            f"{GAMMA_API}/markets?active=true&closed=false&limit=500",
         ]
-        events = []
-        for url in urls:
+
+        all_markets = []
+        for url in search_urls:
             try:
                 r = self.session.get(url, timeout=10)
-                r.raise_for_status()
+                if r.status_code != 200:
+                    continue
                 data = r.json()
-                if isinstance(data, list):
-                    events = data
-                elif isinstance(data, dict):
-                    events = data.get("events", data.get("markets", []))
-                if events:
-                    log.info(f"Fetched {len(events)} items from {url}")
-                    break
+                items = data if isinstance(data, list) else data.get("markets", data.get("events", []))
+                # For events, flatten to markets
+                flat = []
+                for item in items:
+                    if "markets" in item:
+                        flat.extend(item["markets"])
+                    else:
+                        flat.append(item)
+                all_markets.extend(flat)
+                log.info(f"Got {len(flat)} items from {url}")
             except Exception as e:
                 log.warning(f"URL failed {url}: {e}")
-                continue
 
-        if not events:
-            log.error("All API URLs failed")
-            return result
+        # Deduplicate by conditionId
+        seen = set()
+        markets_dedup = []
+        for m in all_markets:
+            cid = m.get("conditionId", m.get("condition_id", ""))
+            if cid and cid not in seen:
+                seen.add(cid)
+                markets_dedup.append(m)
 
-        # Log first few tickers to debug
-        sample = [e.get("ticker", e.get("slug", "?")) for e in events[:10]]
-        log.info(f"Sample tickers: {sample}")
+        log.info(f"Total unique markets: {len(markets_dedup)}")
 
-        for event in events:
-            ticker = event.get("ticker", "").lower()
-            slug   = event.get("slug", "").lower()
-            title  = event.get("title", event.get("question", "")).lower()
+        # Show BTC-related samples
+        btc_samples = []
+        for m in markets_dedup:
+            slug  = (m.get("slug") or m.get("ticker") or "").lower()
+            title = (m.get("question") or m.get("title") or "").lower()
+            if any(k in slug or k in title for k in ["btc", "bitcoin"]):
+                btc_samples.append(f"{slug[:60]} | {title[:40]}")
+        log.info(f"BTC markets found ({len(btc_samples)}): {btc_samples[:10]}")
 
-            is_btc  = any(k in s for k in ["btc", "bitcoin"] for s in [ticker, slug, title])
-            is_5m   = any(k in s for k in ["5m", "5-min", "5min"] for s in [ticker, slug, title])
-            is_15m  = any(k in s for k in ["15m", "15-min", "15min"] for s in [ticker, slug, title])
+        for m in markets_dedup:
+            slug  = (m.get("slug") or m.get("ticker") or "").lower()
+            title = (m.get("question") or m.get("title") or "").lower()
+            desc  = (m.get("description") or "").lower()
+            combined = slug + " " + title + " " + desc
+
+            is_btc = any(k in combined for k in ["btc", "bitcoin"])
+            is_5m  = any(k in combined for k in ["5m", "5-min", "5 min", "five min"])
+            is_15m = any(k in combined for k in ["15m", "15-min", "15 min", "fifteen min"])
 
             if not is_btc:
                 continue
 
-            log.info(f"BTC market found: ticker={ticker} slug={slug} 5m={is_5m} 15m={is_15m}")
+            ticker = m.get("slug") or m.get("ticker") or ""
 
-            markets = event.get("markets", [])
-            if not markets:
-                continue
-
-            m = markets[0]
             try:
-                prices = json.loads(m.get("outcomePrices", "[0.5,0.5]"))
+                prices = m.get("outcomePrices", "[0.5,0.5]")
+                if isinstance(prices, str):
+                    prices = json.loads(prices)
                 yes_price = float(prices[0]) if len(prices) > 0 else 0.5
                 no_price  = float(prices[1]) if len(prices) > 1 else 0.5
-                tokens    = m.get("clobTokenIds", "[]")
+                tokens = m.get("clobTokenIds", "[]")
                 if isinstance(tokens, str):
                     tokens = json.loads(tokens)
+                if not isinstance(tokens, list):
+                    tokens = []
             except Exception:
                 continue
 
@@ -151,16 +171,16 @@ class MarketFinder:
                 "token_no":     tokens[1] if len(tokens) > 1 else "",
                 "yes_price":    yes_price,
                 "no_price":     no_price,
-                "ticker":       event.get("ticker", ""),
-                "slug":         event.get("slug", ""),
+                "ticker":       ticker,
+                "slug":         slug,
             }
 
             if is_5m and result["5m"] is None:
                 result["5m"] = info
-                log.info(f"Found 5m market: {info['ticker']}  YES={yes_price:.4f}  NO={no_price:.4f}")
+                log.info(f"Found 5m market: {ticker}  YES={yes_price:.4f}  NO={no_price:.4f}")
             elif is_15m and result["15m"] is None:
                 result["15m"] = info
-                log.info(f"Found 15m market: {info['ticker']}  YES={yes_price:.4f}  NO={no_price:.4f}")
+                log.info(f"Found 15m market: {ticker}  YES={yes_price:.4f}  NO={no_price:.4f}")
 
             if result["5m"] and result["15m"]:
                 break
